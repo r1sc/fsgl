@@ -95,7 +95,7 @@ type GroupedEnum = {
     Value : Registry.ValueChoice
 }
 
-let generateSources (data: Registry.Registry) (apiName: string) (apiNumber: decimal) =
+let generateSources (data: Registry.Registry) (apiName: string) (apiNumber: decimal) (profile: string)=
 
     let gl1Commands =
         data.Features
@@ -105,20 +105,42 @@ let generateSources (data: Registry.Registry) (apiName: string) (apiNumber: deci
         |> Seq.map (fun f -> f.Name)
         |> Set.ofSeq
 
-    let apiRequires = 
+    let apiStuff =
         data.Features 
-        |> Seq.filter (fun f -> f.Api = apiName && int(apiNumber) = int(f.Number) && f.Number <= apiNumber)
+        |> Seq.filter (fun f -> f.Api = apiName && f.Number <= apiNumber)
+
+    let apiRequires = 
+        apiStuff
         |> Seq.collect (fun f -> f.Requires)
+
+    let apiRemove =        
+        apiStuff
+        |> Seq.collect (fun f -> f.Removes)
+        |> Seq.filter (fun f -> f.Profile = profile)
+       
+    let apiRemoveCommands =        
+        apiRemove
+        |> Seq.collect (fun f -> f.Commands)
+        |> Seq.map (fun f-> f.Name)
+        |> Set.ofSeq
+
+    let apiRemoveEnums =
+        apiRemove
+        |> Seq.collect (fun f -> f.Enums)
+        |> Seq.map (fun f-> f.Name)
+        |> Set.ofSeq
 
     let apiCommands =
         apiRequires
-        |> Seq.collect (fun f -> f.Commands)
+        |> Seq.collect (fun f -> f.Commands)        
+        |> Seq.filter (fun f -> apiRemoveCommands |> Set.contains f.Name |> not )
         |> Seq.map (fun f -> f.Name)
         |> Set.ofSeq
 
     let apiEnums =
         apiRequires
         |> Seq.collect (fun f -> f.Enums)
+        |> Seq.filter (fun f -> apiRemoveEnums |> Set.contains f.Name |> not )
         |> Seq.map (fun f -> f.Name)
         |> Set.ofSeq
             
@@ -130,7 +152,11 @@ let generateSources (data: Registry.Registry) (apiName: string) (apiNumber: deci
 
     let filteredEnums =
         data.Groups
-        |> Seq.collect (fun g -> g.Enums |> Seq.map (fun e -> { GroupName = g.Name; Name = e.Name; Value = allEnumValues |> Map.find e.Name }) |> Seq.distinct)
+        |> Seq.collect (fun g -> 
+                        g.Enums 
+                        |> Seq.filter (fun e -> allEnumValues |> Map.containsKey e.Name )
+                        |> Seq.map (fun e -> { GroupName = g.Name; Name = e.Name; Value = allEnumValues |> Map.find e.Name }) 
+                        |> Seq.distinct)
         |> Seq.groupBy (fun data -> data.GroupName)
         |> Map.ofSeq
         |> Map.filter (fun _ data -> data |> Seq.exists (fun d -> apiEnums |> Set.contains d.Name) 
@@ -288,15 +314,15 @@ let main argv =
         printfn "Available API choices:\r\n%s" (String.concat "\r\n" apiChoices)
     | false ->
         match argv with
-        | [|apiName; version|] ->
+        | [|apiName; version; profile|] ->
             match Decimal.TryParse(version, NumberStyles.Number, CultureInfo.InvariantCulture) with
             | (true, v) ->
-                generateSources data apiName v
+                generateSources data apiName v profile
                 |> String.concat "\r\n"
                 |> printfn "%s"
             | (false, _) ->
                 printfn "You need to specify a valid version number, for example 1.1"
         | _ ->
-            printfn "You need to specify an API name AND a version. For example gl 1.1. Use --list to list available apis"
+            printfn "You need to specify an API name, a version AND a profile. For example gl 1.1 core. Use --list to list available apis"
     
     0 // return an integer exit code
